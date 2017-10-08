@@ -11,6 +11,10 @@ import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
+import io.vertx.ext.web.codec.BodyCodec;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.templ.FreeMarkerTemplateEngine;
 import io.vertx.guides.wiki.database.WikiDatabaseService;
@@ -27,6 +31,8 @@ public class HttpServerVerticle extends AbstractVerticle {
 
   private final FreeMarkerTemplateEngine templateEngine = FreeMarkerTemplateEngine.create();
 
+  private WebClient webClient;
+
   private static final String EMPTY_PAGE_MARKDOWN =
     "# A new page\n" +
       "\n" +
@@ -42,16 +48,20 @@ public class HttpServerVerticle extends AbstractVerticle {
     dbService = WikiDatabaseService.createProxy(vertx, wikiDbQueue);
 
     HttpServer server = vertx.createHttpServer();
-    // (...)
-    // end::db-consume[]
+
+    webClient = WebClient.create(vertx, new WebClientOptions()
+      .setSsl(true)
+      .setUserAgent("vert-x3"));
 
     Router router = Router.router(vertx);
     router.get("/").handler(this::indexHandler);
+    router.get("/backup").handler(this::backupHandler);
     router.get("/wiki/:page").handler(this::pageRenderingHandler);
     router.post().handler(BodyHandler.create());
     router.post("/save").handler(this::pageUpdateHandler);
     router.post("/create").handler(this::pageCreateHandler);
     router.post("/delete").handler(this::pageDeletionHandler);
+
 
     int portNumber = config().getInteger(CONFIG_HTTP_SERVER_PORT, 8080);
     server
@@ -65,6 +75,58 @@ public class HttpServerVerticle extends AbstractVerticle {
           startFuture.fail(ar.cause());
         }
       });
+  }
+
+  private void backupHandler(RoutingContext context) {
+
+    dbService.fetchAllPagesData(reply -> {
+      if(reply.succeeded()){
+
+        JsonObject filesObject = new JsonObject();
+        JsonObject gistPayload = new JsonObject()
+          .put("files", filesObject)
+          .put("description", "A wiki backup")
+          .put("public", true);
+
+        reply.result().forEach(page -> {
+          JsonObject fileObject = new JsonObject();
+          fileObject.put(page.getString("NAME"), fileObject);
+          fileObject.put("content", page.getString("CONTENT"));
+        });
+
+        webClient.post(443, "api.github.com", "/gists")
+          .putHeader("Accept", "application/vnd.github.v3+json")
+          .putHeader("Content-Type", "application/json")
+          .as(BodyCodec.jsonObject())
+          .sendJsonObject(gistPayload, ar -> {
+            if (ar.succeeded()) {
+              HttpResponse<JsonObject> response = ar.result();
+              if (response.statusCode() == 201) {
+                context.put("backup_gist_url", response.body().getString("html_url"));
+                indexHandler(context);
+              } else {
+                StringBuilder message = new StringBuilder()
+                  .append("Could not backup the wiki: ")
+                  .append(response.statusMessage());
+                JsonObject body = response.body();
+                if (body != null) {
+                  message.append(System.getProperty("line.separator"))
+                    .append(body.encodePrettily());
+                }
+                LOGGER.error(message.toString());
+                context.fail(502);
+              }
+            } else {
+              Throwable err = ar.cause();
+              LOGGER.error("HTTP Client error", err);
+              context.fail(err);
+            }
+          });
+
+      } else {
+        context.fail(reply.cause());
+      }
+    });
   }
 
   // tag::db-service-calls[]
