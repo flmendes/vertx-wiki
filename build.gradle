@@ -21,6 +21,8 @@ dependencies {
   compile "io.vertx:vertx-web:$vertxVersion"
   compile "io.vertx:vertx-web-templ-freemarker:$vertxVersion"
   compile "io.vertx:vertx-jdbc-client:$vertxVersion"
+  compile "io.vertx:vertx-service-proxy:$vertxVersion"
+  compileOnly "io.vertx:vertx-codegen:$vertxVersion"
 
   compile "org.hsqldb:hsqldb:2.3.4"
   compile "ch.qos.logback:logback-classic:1.2.3"
@@ -28,6 +30,32 @@ dependencies {
 
   testCompile "junit:junit:4.12"
   testCompile "io.vertx:vertx-unit:$vertxVersion"
+}
+
+task annotationProcessing(type: JavaCompile, group: 'build') { // codegen
+  source = sourceSets.main.java
+  classpath = configurations.compile + configurations.compileOnly
+  destinationDir = project.file('src/main/generated')
+  options.compilerArgs = [
+    "-proc:only",
+    "-processor", "io.vertx.codegen.CodeGenProcessor",
+    "-Acodegen.output=${project.projectDir}/src/main"
+  ]
+}
+
+compileJava {
+  targetCompatibility = 1.8
+  sourceCompatibility = 1.8
+
+  dependsOn annotationProcessing
+}
+
+sourceSets {
+  main {
+    java {
+      srcDirs += 'src/main/generated'
+    }
+  }
 }
 
 shadowJar {
