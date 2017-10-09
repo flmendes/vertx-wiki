@@ -79,8 +79,25 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
     dbClient.getConnection(car -> {
       if (car.succeeded()) {
         SQLConnection connection = car.result();
-        connection.queryWithParams(sqlQueries.get(SqlQuery.GET_PAGE), new JsonArray().add(name),
-          getAsyncResultHandler(resultHandler, connection));
+        connection.queryWithParams(sqlQueries.get(SqlQuery.GET_PAGE), new JsonArray().add(name), fetch -> {
+          connection.close();
+          if (fetch.succeeded()) {
+            JsonObject response = new JsonObject();
+            ResultSet resultSet = fetch.result();
+            if (resultSet.getNumRows() == 0) {
+              response.put("found", false);
+            } else {
+              response.put("found", true);
+              JsonArray row = resultSet.getResults().get(0);
+              response.put("id", row.getInteger(0));
+              response.put("rawContent", row.getString(1));
+            }
+            resultHandler.handle(Future.succeededFuture(response));
+          } else {
+            LOGGER.error("Database query error", fetch.cause());
+            resultHandler.handle(Future.failedFuture(fetch.cause()));
+          }
+        });
       } else {
         LOGGER.error("Database query error", car.cause());
         resultHandler.handle(Future.failedFuture(car.cause()));
@@ -92,9 +109,26 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
   @Override
   public WikiDatabaseService fetchPageById(int id, Handler<AsyncResult<JsonObject>> resultHandler) {
     dbClient.getConnection(car -> {
-      if(car.succeeded()){
+      if (car.succeeded()) {
         SQLConnection connection = car.result();
-        connection.queryWithParams(sqlQueries.get(SqlQuery.GET_PAGE_BY_ID), new JsonArray().add(id), getAsyncResultHandler(resultHandler, connection));
+        connection.queryWithParams(sqlQueries.get(SqlQuery.GET_PAGE_BY_ID), new JsonArray().add(id), res -> {
+          if (res.succeeded()) {
+            if (res.result().getNumRows() > 0) {
+              JsonObject result = res.result().getRows().get(0);
+              resultHandler.handle(Future.succeededFuture(new JsonObject()
+                .put("found", true)
+                .put("id", result.getInteger("ID"))
+                .put("name", result.getString("NAME"))
+                .put("content", result.getString("CONTENT"))));
+            } else {
+              resultHandler.handle(Future.succeededFuture(
+                new JsonObject().put("found", false)));
+            }
+          } else {
+            LOGGER.error("Database query error", res.cause());
+            resultHandler.handle(Future.failedFuture(res.cause()));
+          }
+        });
       } else {
         LOGGER.error("Database query error", car.cause());
         resultHandler.handle(Future.failedFuture(car.cause()));
@@ -103,29 +137,6 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
     return this;
   }
 
-  private Handler<AsyncResult<ResultSet>> getAsyncResultHandler(Handler<AsyncResult<JsonObject>> resultHandler, SQLConnection connection) {
-    return fetch -> {
-      connection.close();
-      if(fetch.succeeded()){
-        JsonObject response = new JsonObject();
-        ResultSet resultSet = fetch.result();
-        if (resultSet.getNumRows() == 0) {
-          response.put("found", false);
-        } else {
-          response.put("found", true);
-          JsonArray row = resultSet.getResults().get(0);
-          response.put("id", row.getInteger(0));
-          response.put("name", row.getInteger(1));
-          response.put("rawContent", row.getString(2));
-        }
-        resultHandler.handle(Future.succeededFuture(response));
-      } else {
-        LOGGER.error("Database query error", fetch.cause());
-        resultHandler.handle(Future.failedFuture(fetch.cause()));
-      }
-
-    };
-  }
 
   @Override
   public WikiDatabaseService createPage(String title, String markdown, Handler<AsyncResult<Void>> resultHandler) {
