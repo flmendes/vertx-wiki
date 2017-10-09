@@ -23,6 +23,8 @@ dependencies {
   compile "io.vertx:vertx-jdbc-client:$vertxVersion"
   compile "io.vertx:vertx-service-proxy:$vertxVersion"
   compile "io.vertx:vertx-web-client:$vertxVersion"
+  compile "io.vertx:vertx-auth-shiro:$vertxVersion"
+  compile "io.vertx:vertx-auth-jwt:$vertxVersion"
 
   compileOnly "io.vertx:vertx-codegen:$vertxVersion"
 
